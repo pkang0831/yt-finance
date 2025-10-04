@@ -1,0 +1,92 @@
+# YouTube AI Finance Pipeline Configuration
+
+# Pipeline Settings
+pipeline:
+  max_concurrent_videos: 3
+  processing_delay_minutes: 30
+  cleanup_old_files_days: 7
+
+# Content Generation
+content:
+  script_length_seconds: 60
+  hook_duration_seconds: 5
+  cta_duration_seconds: 10
+  max_keywords: 5
+  language: "en"
+  tone: "professional"
+
+# Video Settings
+video:
+  resolution:
+    width: 1080
+    height: 1920
+  fps: 30
+  bitrate: "5000k"
+  format: "mp4"
+  
+# Audio Settings
+audio:
+  sample_rate: 44100
+  bitrate: "128k"
+  format: "mp3"
+  
+# Thumbnail Settings
+thumbnail:
+  width: 1280
+  height: 720
+  format: "jpg"
+  quality: 95
+  
+# News Sources
+news_sources:
+  - name: "Yahoo Finance"
+    url: "https://feeds.finance.yahoo.com/rss/2.0/headline"
+    category: "general"
+  - name: "CNBC"
+    url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    category: "business"
+  - name: "Reuters Business"
+    url: "https://feeds.reuters.com/reuters/businessNews"
+    category: "business"
+
+# AI Models
+ai_models:
+  openai:
+    model: "gpt-4"
+    temperature: 0.7
+    max_tokens: 2000
+  elevenlabs:
+    model: "eleven_multilingual_v2"
+    voice_settings:
+      stability: 0.5
+      similarity_boost: 0.75
+
+# YouTube Upload Settings
+youtube:
+  privacy_status: "private"  # private, unlisted, public
+  category_id: "25"  # News & Politics
+  default_language: "en"
+  tags:
+    - "finance"
+    - "news"
+    - "ai"
+    - "automated"
+    - "trading"
+    - "stocks"
+    - "crypto"
+    - "economy"
+
+# File Paths
+paths:
+  workitems: "./data/workitems"
+  outputs: "./data/outputs"
+  logs: "./data/logs"
+  oauth: "./yt_oauth"
+  
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  max_file_size_mb: 10
+  backup_count: 5
+
