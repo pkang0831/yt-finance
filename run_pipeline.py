@@ -1,155 +1,51 @@
-#!/usr/bin/env python3
-"""
-YouTube AI Finance Pipeline - Main Entry Point
-
-This script orchestrates the entire pipeline from news ingestion to YouTube upload.
-"""
-
-import asyncio
-import logging
-import sys
+import os, sys
 from pathlib import Path
-from typing import List, Dict, Any
-
-import yaml
+from datetime import datetime
 from dotenv import load_dotenv
+from tqdm import tqdm
 
-# Add src to path for imports
-sys.path.append(str(Path(__file__).parent / "src"))
+from src.utils.io import read_yaml, ensure_dir
+from src.ingest.news_feed import collect_items
+from src.author.script_writer import write_script
+from src.voice.tts_elevenlabs import tts
+from src.media.broll_pexels import fetch_broll
+from src.media.compose_moviepy import render_vertical
+from src.media.thumbnail import make_thumbnail
+from src.publish.youtube_upload import upload
 
-from utils.logger import setup_logger
-from utils.io import load_config, ensure_directories
-from ingest.news_feed import NewsFeedIngester
-from author.script_writer import ScriptWriter
-from voice.tts_elevenlabs import ElevenLabsTTS
-from media.broll_pexels import PexelsBrollDownloader
-from media.compose_moviepy import VideoComposer
-from media.thumbnail import ThumbnailGenerator
-from publish.youtube_upload import YouTubeUploader
+def main(n_items=None):
+    load_dotenv()
+    cfg = read_yaml("config.yaml")
+    day_dir = Path("data/outputs") / datetime.now().strftime("%Y%m%d_%H%M")
+    ensure_dir(day_dir)
+    work_dir = Path("data/workitems"); ensure_dir(work_dir)
 
+    # 1) 수집
+    items = collect_items(cfg["feeds"], work_dir)
+    if n_items: items = items[:int(n_items)]
 
-class YouTubeAIPipeline:
-    """Main pipeline orchestrator for YouTube AI Finance content generation."""
-    
-    def __init__(self, config_path: str = "config.yaml"):
-        """Initialize the pipeline with configuration."""
-        load_dotenv()
-        self.config = load_config(config_path)
-        self.logger = setup_logger("pipeline", self.config)
-        
-        # Initialize components
-        self.news_ingester = NewsFeedIngester(self.config)
-        self.script_writer = ScriptWriter(self.config)
-        self.tts = ElevenLabsTTS(self.config)
-        self.broll_downloader = PexelsBrollDownloader(self.config)
-        self.video_composer = VideoComposer(self.config)
-        self.thumbnail_generator = ThumbnailGenerator(self.config)
-        self.youtube_uploader = YouTubeUploader(self.config)
-        
-        # Ensure directories exist
-        ensure_directories(self.config)
-        
-    async def run_pipeline(self) -> None:
-        """Run the complete pipeline."""
-        try:
-            self.logger.info("Starting YouTube AI Finance Pipeline")
-            
-            # Step 1: Ingest news and create work items
-            work_items = await self.ingest_news()
-            if not work_items:
-                self.logger.warning("No work items created, pipeline stopping")
-                return
-                
-            # Step 2: Process each work item
-            for work_item in work_items:
-                await self.process_work_item(work_item)
-                
-            self.logger.info("Pipeline completed successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Pipeline failed: {e}", exc_info=True)
-            raise
-    
-    async def ingest_news(self) -> List[Dict[str, Any]]:
-        """Ingest news feeds and create work items."""
-        self.logger.info("Ingesting news feeds...")
-        
-        news_items = await self.news_ingester.fetch_news()
-        work_items = []
-        
-        for news_item in news_items:
-            work_item = {
-                "id": news_item["id"],
-                "title": news_item["title"],
-                "summary": news_item["summary"],
-                "keywords": news_item["keywords"],
-                "source": news_item["source"],
-                "timestamp": news_item["timestamp"],
-                "status": "pending"
-            }
-            work_items.append(work_item)
-            
-        self.logger.info(f"Created {len(work_items)} work items")
-        return work_items
-    
-    async def process_work_item(self, work_item: Dict[str, Any]) -> None:
-        """Process a single work item through the entire pipeline."""
-        work_item_id = work_item["id"]
-        self.logger.info(f"Processing work item: {work_item_id}")
-        
-        try:
-            # Step 1: Generate script
-            script = await self.script_writer.generate_script(work_item)
-            work_item["script"] = script
-            work_item["status"] = "script_generated"
-            
-            # Step 2: Generate audio
-            audio_path = await self.tts.generate_audio(script["content"])
-            work_item["audio_path"] = audio_path
-            work_item["status"] = "audio_generated"
-            
-            # Step 3: Download B-roll footage
-            broll_paths = await self.broll_downloader.download_footage(
-                script["keywords"], script["duration"]
-            )
-            work_item["broll_paths"] = broll_paths
-            work_item["status"] = "broll_downloaded"
-            
-            # Step 4: Compose video
-            video_path = await self.video_composer.compose_video(
-                audio_path, broll_paths, script["subtitle_timings"]
-            )
-            work_item["video_path"] = video_path
-            work_item["status"] = "video_composed"
-            
-            # Step 5: Generate thumbnail
-            thumbnail_path = await self.thumbnail_generator.generate_thumbnail(
-                work_item["title"], script["keywords"]
-            )
-            work_item["thumbnail_path"] = thumbnail_path
-            work_item["status"] = "thumbnail_generated"
-            
-            # Step 6: Upload to YouTube
-            youtube_url = await self.youtube_uploader.upload_video(
-                video_path, thumbnail_path, script
-            )
-            work_item["youtube_url"] = youtube_url
-            work_item["status"] = "uploaded"
-            
-            self.logger.info(f"Successfully processed work item: {work_item_id}")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to process work item {work_item_id}: {e}")
-            work_item["status"] = "failed"
-            work_item["error"] = str(e)
+    made = 0
+    for raw in tqdm(items, desc="workitems"):
+        from src.utils.hash import stable_hash
+        h = stable_hash(raw["title"]+raw["link"])
+        raw_path = work_dir / f"{h}.raw.json"
+        # 2) 스크립트
+        script_path = write_script(raw_path, total_duration_sec=cfg["video"]["target_seconds"])
+        # 3) 음성
+        mp3_path = tts(script_path)
+        # 4) B-roll
+        broll_path = fetch_broll(cfg["broll"]["search_terms"], day_dir, min_height=cfg["broll"]["min_height"])
+        # 5) 합성
+        video_path = render_vertical(script_path, broll_path, mp3_path)
+        # 6) 썸네일
+        thumb_path = make_thumbnail(script_path)
+        # 7) 업로드
+        res = upload(video_path, script_path, thumb_path)
+        made += 1 if res.get("status")=="ok" else 0
 
-
-async def main():
-    """Main entry point."""
-    pipeline = YouTubeAIPipeline()
-    await pipeline.run_pipeline()
-
+        if made >= cfg["runtime"]["max_items_per_run"]:
+            break
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    n = sys.argv[1] if len(sys.argv)>1 else None
+    main(n_items=n)
